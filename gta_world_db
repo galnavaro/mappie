@@ -1,0 +1,73 @@
+/*
+ *
+ *			gta_world.inc by Lorenc_
+ *		Access/use data within the database
+ *
+*/
+
+#if defined _gtaworld_included
+  #endinput
+#endif
+
+#define _gtaworld_included
+
+#tryinclude <sqlitei>
+
+new DB: gta_world_db;
+
+enum E_OBJECT_MODEL_DATA
+{
+	E_MODEL, 		E_LOD_MODEL, 	E_NAME[ 32 ],
+	Float: E_X,		Float: E_Y,		Float: E_Z,
+	Float: E_RX,	Float: E_RY,	Float: E_RZ
+};
+
+stock GetObjectModelData( modelid, aStorage[ E_OBJECT_MODEL_DATA ] )
+{
+	static
+		DBResult: result,
+		szQuery[ 64 ];
+
+	format( szQuery, sizeof( szQuery ), "SELECT * FROM `models` WHERE `modelid` = %d LIMIT 0,1", modelid );
+
+	gta_world_db = db_open( "gta_objects.db" );
+
+	result = db_query( gta_world_db, szQuery );
+
+	if( db_num_rows( result ) )
+	{
+        aStorage[ E_MODEL ] = db_get_field_int( result, 0 );
+        aStorage[ E_LOD_MODEL ] = db_get_field_int( result, 1 );
+        db_get_field_assoc( result, "modelname", aStorage[ E_NAME ], 32 );
+        aStorage[ E_X ] = db_get_field_float( result, 3 );
+        aStorage[ E_Y ] = db_get_field_float( result, 4 );
+        aStorage[ E_X ] = db_get_field_float( result, 5 );
+        aStorage[ E_RX ] = db_get_field_float( result, 6 );
+        aStorage[ E_RY ] = db_get_field_float( result, 7 );
+        aStorage[ E_RZ ] = db_get_field_float( result, 8 );
+        print("Result");
+	}
+
+	db_free_result( result );
+	db_close( gta_world_db );
+}
+
+stock isValidModel( modelid )
+{
+	static
+		DBResult: result,
+		szQuery[ 64 ],
+		rows;
+
+	format( szQuery, sizeof( szQuery ), "SELECT `modelid` FROM `models` WHERE `modelid` = %d", modelid );
+
+	gta_world_db = db_open( "gta_objects.db" );
+	result = db_query( gta_world_db, szQuery );
+
+	rows = db_num_rows( result );
+
+	db_free_result( result );
+	db_close( gta_world_db );
+
+	return rows ? true : false;
+}
