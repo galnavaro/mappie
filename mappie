@@ -1,0 +1,529 @@
+/*
+	*	 ____  ____	
+	*	|	 \/	   |	  
+	*	|  |\  /|  | APPIE   	V 0.0.1
+	*	|__| \/	|__|     
+	*
+	*
+	*	Contributors:
+	*		Lorenc - Project Starter / Main Developer
+	*		Kar - Project Major Assistant 
+	*		Niels - Waterboy
+	*
+*/
+
+/* ** Includes ** */
+#include 							< a_samp >
+#include 							< sqlitei >
+#include 							< zcmd >
+#include 							< sscanf2 >
+#include 							< foreach >
+#include 							< gta_world >
+#include 							< streamer >
+#include 							< YSI\y_va >
+
+/* ** Configuration ** */
+#define FILTERSCRIPT 				// So includes properly acknowledge it's a FilterScript
+
+#undef  MAX_PLAYERS
+#define MAX_PLAYERS 				( 50 ) // Specify to your server's needs
+
+#define MAX_MAPS_AT_ONCE 			( 8 )
+
+#define NO_PERMS 					false // Disables permissions
+
+/* ** Definitions ** */
+
+	#define MAX_MAPPED_OBJECTS 			( 512 )
+
+	/* ** Macros ** */
+
+	/* ** Colours ** */
+	#define COL_PRIMARY				"{FF6600}" // Primary Colour (Hot Orange)
+	#define COL_SECONDARY			"{FFB380}" // Secondary Color (Light Orange)
+	
+	#define COL_WHITE 				"{FFFFFF}"
+ 
+/* ** Variables ** */
+	
+	/* ** Player ** */
+	enum E_GLOBAL_OBJECTS
+	{
+		E_OBJECT, 					E_MODEL_ID, 				Float: E_X,
+		Float: E_Y, 				Float: E_Z, 				Float: E_RX,
+		Float: E_RY, 				Float: E_RZ, 				E_MAT_INDEX,
+		E_MAT_MODEL,				E_MAT_TXD[ 32 ], 			E_MAT_TEXTURE[ 32 ],
+		E_MAT_COLOR,				E_TEXT[ 72 ], 				E_TEXT_SIZE,
+		E_FONT[ 16 ],				E_FONT_SIZE,				E_BOLD,
+		E_FRONT_COLOR, 				E_BACK_COLOR,				E_ALIGNMENT,
+		E_SQL_ID
+	};	
+
+	new
+		g_objectData						[ MAX_MAPS_AT_ONCE ] [ MAX_MAPPED_OBJECTS ] [ E_GLOBAL_OBJECTS ],
+		bool: p_hasPermission				[ MAX_PLAYERS char ],
+		bool: p_canGivePerms				[ MAX_PLAYERS char ],
+		p_editingMap 						[ MAX_PLAYERS ],
+		
+		// Slot Manager
+		bool: g_objectSlotData				[ MAX_MAPS_AT_ONCE ] [ MAX_MAPPED_OBJECTS ] // foreach bugs for some reason
+	;
+
+	/* ** Server ** */
+	enum E_MAP_DATA
+	{
+		E_ID,						E_AUTHOR,					E_AUTHOR_NAME[ MAX_PLAYER_NAME ]
+	};
+
+	new 
+		DB: Database,
+
+		g_mapData					[ MAX_MAPS_AT_ONCE ] [ E_MAP_DATA ],
+
+		szPlayerName				[ MAX_PLAYER_NAME ],
+
+		// Iterator
+		Iterator:maps<MAX_MAPS_AT_ONCE>
+	;
+
+/* ** Forwards ** */
+
+public OnFilterScriptInit()
+{
+	Database = db_open( "misc/mappie.db" );
+
+	// Objectse
+	
+	db_query( Database, 
+			  "	CREATE TABLE IF NOT EXISTS `objects`  					"\
+			  "	(									 					"\
+			  "		`id` INTEGER PRIMARY KEY AUTOINCREMENT, 			"\
+			  "		`map_id` INTEGER,									"\
+			  "		`x` REAL,											"\
+			  "		`y` REAL,											"\
+			  "		`z` REAL,											"\
+			  "		`rx` REAL,											"\
+			  "		`ry` REAL,											"\
+			  "		`rz` REAL											"\
+			  "	)														"
+	);
+
+	// Maps
+	db_query( Database, 
+			  "	CREATE TABLE IF NOT EXISTS `maps`  						"\
+			  "	(														"\
+			  "		`id` INTEGER PRIMARY KEY AUTOINCREMENT, 			"\
+			  "		`name` TEXT, 										"\
+			  "		`author` INTEGER 									"\
+			  "	)														"
+	);
+
+	// Permissions
+	db_query( Database, 
+			  "	CREATE TABLE IF NOT EXISTS `perms`  					"\
+			  "	(														"\
+			  "		`id` INTEGER PRIMARY KEY AUTOINCREMENT, 			"\
+			  " 	`author` TEXT,										"\
+			  " 	`issue_perms` INTEGER								"\
+			  "	)														"
+	);
+	return 1;
+}
+
+public OnFilterScriptExit()
+{
+	return 1;
+}
+
+public OnPlayerConnect(playerid)
+{
+	return 1;
+}
+
+public OnPlayerDisconnect(playerid, reason)
+{
+	return 1;
+}
+
+public OnPlayerSpawn(playerid)
+{
+	return 1;
+}
+
+public OnPlayerDeath(playerid, killerid, reason)
+{
+	return 1;
+}
+
+public OnVehicleSpawn(vehicleid)
+{
+	return 1;
+}
+
+public OnVehicleDeath(vehicleid, killerid)
+{
+	return 1;
+}
+
+public OnPlayerText(playerid, text[])
+{
+	return 1;
+}
+
+/*
+	/som
+	/createobject
+	/toggleeditor
+*/
+
+
+CMD:som( playerid, params[ ] )
+{
+	#if NO_PERMS == false		
+		if( !p_hasPermission{ playerid } ) return SendClientMessage( playerid, -1, ""COL_PRIMARY"[MAPPIE ERROR]"COL_SECONDARY" This command requires object editor permission." );
+	#endif
+
+	new 
+		iDynamic, iMap = p_editingMap[ playerid ],
+		materialindex, mamodel, txdname[ 32 ], texturename[ 32 ], color[ 11 ]
+	;
+
+	if( sscanf( params, "iiis[50]s[50]s[11](0xFFFFFFFF)", iDynamic, materialindex, mamodel, txdname, texturename, color ) ) return SendClientMessage(playerid, -1, ""COL_PRIMARY"[MAPPIE USAGE]"COL_SECONDARY" /som [dynamic/object id] [materialindex] [modelid] [txdname] [texturename] [color]");
+	else if( iDynamic < 0 || iDynamic > MAX_MAPPED_OBJECTS ) return SendClientMessage( playerid, -1, ""COL_PRIMARY"[MAPPIE ERROR]"COL_SECONDARY" Invalid Dynamic/Object ID." ); // Bad to access arrays with variables inadequate to its size
+	else if( !IsValidDynamicObject( g_objectData[ iMap ] [ iDynamic ] [ E_MODEL_ID ] ) )  return SendClientMessage( playerid, -1, ""COL_PRIMARY"[MAPPIE ERROR]"COL_SECONDARY" This Dynamic/Object ID does not exist." );
+	else
+	{
+	 	g_objectData[ iMap ] [ iDynamic ] [ E_MAT_MODEL ] = mamodel;
+		g_objectData[ iMap ] [ iDynamic ] [ E_MAT_INDEX ] = materialindex;
+		g_objectData[ iMap ] [ iDynamic ] [ E_MAT_TXD ] = txdname;
+		g_objectData[ iMap ] [ iDynamic ] [ E_MAT_TEXTURE ] = texturename;
+		g_objectData[ iMap ] [ iDynamic ] [ E_MAT_COLOR ] = HexToInt( color );
+
+		SetDynamicObjectMaterial( g_objectData[ iMap ] [ iDynamic ] [ E_OBJECT ], materialindex, mamodel, txdname, txdname, g_objectData[ iMap ] [ iDynamic ] [ E_MAT_COLOR ] );
+
+		SendClientMessageFormatted( playerid, -1, ""COL_PRIMARY"[MAPPIE]"COL_SECONDARY" You have successfully changed the texture of dynamic id %d", iDynamic );
+	}
+  	return 1;
+}
+
+CMD:createobject( playerid, params[ ] )
+{
+	#if NO_PERMS == false		
+		if( !p_hasPermission{ playerid } ) return SendClientMessage( playerid, -1, ""COL_PRIMARY"[MAPPIE ERROR]"COL_SECONDARY" This command requires object editor permission." );
+	#endif
+
+	new
+		Float: fDistance,
+		Float: fAngle,
+		iModel
+	;
+
+	if( sscanf( params, "dF(5.0)", iModel, fDistance ) )
+	{
+		SendClientMessage( playerid, -1, ""COL_PRIMARY"[MAPPIE USAGE]"COL_SECONDARY" /toggleeditor [model id] [distance (= 5.0)]" );
+		SendClientMessage( playerid, -1, ""COL_SECONDARY" > Object Model ID" );
+		SendClientMessage( playerid, -1, ""COL_SECONDARY" > How far in front of you shall the object spawn?" );
+		return 1;
+	}
+	//else if( IsValidModel( iModel ) ) return;
+	else if( fDistance > 200.0 ) return SendClientMessage( playerid, -1, ""COL_PRIMARY"[MAPPIE ERROR]"COL_SECONDARY" Maximum distance is set to 200.0m" );
+	else
+	{
+		new Float: X, Float: Y, Float: Z, iDynamic;
+
+		GetPlayerPos( playerid, X, Y, Z );
+		GetPlayerFacingAngle( playerid, fAngle );
+
+		X += fDistance * floatsin( -fAngle, degrees );
+		Y += fDistance * floatcos( -fAngle, degrees );
+
+		iDynamic = appendObject( p_editingMap[ playerid ], iModel, X, Y, Z, 0.0, 0.0, 0.0 );
+
+		SendClientMessageFormatted( playerid, -1, ""COL_PRIMARY"[MAPPIE]"COL_SECONDARY" You've placed object model %d consuming ID %d!", iModel, iDynamic );
+	}
+	return 1;
+}
+
+CMD:createmap( playerid, params[ ] )
+{
+	/*
+	#if NO_PERMS == false		
+		if( !p_hasPermission{ playerid } ) return SendClientMessage( playerid, -1, ""COL_PRIMARY"[MAPPIE ERROR]"COL_SECONDARY" This command requires object editor permission." );
+	#endif
+
+	still being worked on...
+	*/
+
+	new mapid = Iter_Free(maps);
+
+	if( mapid != -1 )
+	{
+		Iter_Add( maps, mapid );
+
+		/*
+			new DBStatement: stmt;
+		    stmt = db_prepare( Database, "INSERT INTO `maps` (`name`, `author`) VALUES(?, ?)" );
+		    stmt_bind_value( stmt, 0, DB::TYPE_INT, iMap );
+		    stmt_bind_value( stmt, 1, DB::TYPE_FLOAT, x );
+		    stmt_bind_value( stmt, 2, DB::TYPE_FLOAT, y );
+		    stmt_bind_value( stmt, 3, DB::TYPE_FLOAT, z );
+		    stmt_bind_value( stmt, 4, DB::TYPE_FLOAT, rx );
+		*/
+	}
+	return 1;
+}
+
+CMD:loadmap( playerid, params[ ] )
+{/*
+	#if NO_PERMS == false		
+		if( !p_hasPermission{ playerid } ) return SendClientMessage( playerid, -1, ""COL_PRIMARY"[MAPPIE ERROR]"COL_SECONDARY" This command requires object editor permission." );
+	#endif
+*/
+	new 
+  		DBStatement:mSTMT,
+  		DBStatement:oSTMT,
+		mapid
+	;
+
+	if( sscanf( params, "d", mapid ) ) return SendClientMessage( playerid, -1, ""COL_PRIMARY"[MAPPIE USAGE]"COL_SECONDARY" /loadmap [map id]" );
+	else
+	{
+		new id = Iter_Free(maps);
+
+		if( id != -1 )
+		{
+	        mSTMT = db_prepare( Database, "SELECT * FROM maps WHERE id = ?");
+	        stmt_bind_value( mSTMT, 0, DB::TYPE_INT, mapid);
+
+		    stmt_bind_result_field( mSTMT, 0, DB::TYPE_INT   , g_mapData[ id ] [ E_ID ] );
+		    stmt_bind_result_field( mSTMT, 1, DB::TYPE_STRING, g_mapData[ id ] [ E_AUTHOR_NAME ], MAX_PLAYER_NAME );
+		    stmt_bind_result_field( mSTMT, 2, DB::TYPE_INT   , g_mapData[ id ] [ E_AUTHOR ] );
+
+	        if (stmt_execute(mSTMT) && stmt_rows_left(mSTMT)) {
+	        	Iter_Add(maps, id);
+
+	        	new sqlid, map_id, Float: X, Float: Y, Float: Z, Float: rX, Float: rY, Float: rZ;
+
+	        	oSTMT = db_prepare( Database, "SELECT * FROM objects WHERE map_id = ?" );
+	        	stmt_bind_value( oSTMT, 0, DB::TYPE_INT, mapid );
+
+			    stmt_bind_result_field( mSTMT, 0, DB::TYPE_INT   , sqlid );
+			    stmt_bind_result_field( mSTMT, 1, DB::TYPE_INT   , map_id );
+			    stmt_bind_result_field( mSTMT, 2, DB::TYPE_FLOAT , X );
+			    stmt_bind_result_field( mSTMT, 3, DB::TYPE_FLOAT , Y );
+			    stmt_bind_result_field( mSTMT, 4, DB::TYPE_FLOAT , Z );
+			    stmt_bind_result_field( mSTMT, 5, DB::TYPE_FLOAT , rX );
+			    stmt_bind_result_field( mSTMT, 6, DB::TYPE_FLOAT , rY );
+			    stmt_bind_result_field( mSTMT, 7, DB::TYPE_FLOAT , rZ );
+
+			    #pragma unused map_id
+
+			    if( stmt_execute( mSTMT ) ) {
+
+                	while( stmt_fetch_row( mSTMT ) )
+                		printf( "%d, %d, %f, %f, %f, %f, %f, %f", sqlid, mapid, X, Y, Z, rX, rY, rZ );
+			    }
+	        }
+	        else SendClientMessage( playerid, -1, ""COL_PRIMARY"[MAPPIE ERROR]"COL_SECONDARY" The map ID specified cannot be found." );
+
+	        stmt_close( mSTMT );
+		}
+		else SendClientMessage( playerid, -1, ""COL_PRIMARY"[MAPPIE ERROR]"COL_SECONDARY" You cannot develop any maps at the moment as the slots are occupied." );
+	}
+	return 1;
+}
+
+CMD:toggleeditor(playerid, params[])
+{
+	#if NO_PERMS == false			
+		if( p_canGivePerms{ playerid } || IsPlayerAdmin( playerid ) ) 
+		{
+			new pID;
+
+			if( sscanf( params, "k<player_name>", pID ) )
+			{
+				SendClientMessage( playerid, -1, ""COL_PRIMARY"[MAPPIE USAGE]"COL_SECONDARY" /toggleeditor [player name/id]" );
+				SendClientMessage( playerid, -1, ""COL_SECONDARY" > Designated Player" );
+				return 1;
+			}
+			else if( !IsPlayerConnected( pID ) ) return SendClientMessage( playerid, -1, ""COL_PRIMARY"[MAPPIE ERROR]"COL_SECONDARY" Player is not connected." );
+			else if( IsPlayerAdmin( pID ) && !IsPlayerAdmin( pID ) ) return SendClientMessage( playerid, -1, ""COL_PRIMARY"[MAPPIE ERROR]"COL_SECONDARY" Player has more authority than you." );
+			else
+			{
+				p_hasPermission{ pID } = !p_hasPermission{ pID };
+
+				new
+					bool: is_permed = p_hasPermission{ pID };
+
+				givePlayerPermission( pID, false, is_permed );
+
+				GetPlayerName( playerid, szPlayerName, sizeof( szPlayerName ) );
+				SendClientMessageFormatted( pID, -1, ""COL_PRIMARY"[MAPPIE]"COL_SECONDARY" %s has %s you to use the object editor.", szPlayerName, is_permed == true ? ( "allowed" ) : ( "disallowed" ) );
+
+				GetPlayerName( pID, szPlayerName, sizeof( szPlayerName ) );
+				SendClientMessageFormatted( playerid, -1, ""COL_PRIMARY"[MAPPIE]"COL_SECONDARY" You have %s %s to use the object editor.", is_permed == true ? ( "allowed" ) : ( "disallowed" ), szPlayerName );
+
+				// cacheObjects( playerid );
+			}
+		}
+		else SendClientMessage( playerid, -1, ""COL_PRIMARY"[MAPPIE ERROR]"COL_SECONDARY" You have insufficient authority to use this command." );
+	#else
+		SendClientMessage( playerid, -1, ""COL_PRIMARY"[MAPPIE]"COL_SECONDARY" The map editor is available to everyone, thus feature unavailable." );
+	#endif
+	return 1;
+}
+
+// Functions
+stock SendClientMessageFormatted( playerid, colour, format[ ], va_args<> )
+{
+    static
+		out[ 144 ]
+	;
+    va_format( out, sizeof( out ), format, va_start<3> );
+
+	if( !IsPlayerConnected( playerid ) ) {
+		SendClientMessageToAll( colour, out );
+		return 0;
+	}
+ 	return SendClientMessage( playerid, colour, out );
+}
+
+forward bool: IsPlayerMapPermitted( playerid ); public bool: IsPlayerMapPermitted( playerid ) // To embed in their gamemodes
+	return p_hasPermission{ playerid };
+
+
+SSCANF:player_name(string[]) { // tyvm Slice
+    new foundplayer = INVALID_PLAYER_ID, name[MAX_PLAYER_NAME];
+    new bool:numeric = true;
+    
+    for (new i = 0, c; (c = string[i]); i++) {
+        if (c < '0' || c > '9') {
+            numeric = false;
+            
+            break;
+        }
+    }
+    
+    if (numeric) {
+        foundplayer = strval(string);
+        
+        if (IsPlayerConnected(foundplayer))
+            return foundplayer;
+        else
+            foundplayer = INVALID_PLAYER_ID;
+    }
+    
+    foreach(new playerid : Player) {
+        GetPlayerName(playerid, name, sizeof(name));
+        
+        if (strfind(name, string, true) != -1) {
+            if (foundplayer != INVALID_PLAYER_ID)
+                return INVALID_PLAYER_ID; // Multiple matches
+            else
+                foundplayer = playerid;
+        }
+    }
+    
+    return foundplayer;
+}
+
+stock AddFileLogLine( file[ ], input[ ] )
+{
+    new
+		File: fHandle
+	;
+    fHandle = fopen(file, io_append);
+    fwrite(fHandle, input);
+    fclose(fHandle);
+    return 1;
+}
+
+stock appendObject( iMap, modelid, Float:x, Float:y, Float:z, Float:rx, Float:ry, Float:rz, bool: loading = false )
+{
+	if( !Iter_Contains( maps, iMap ) )
+		return -1;
+
+	new
+	 	objectid = INVALID_OBJECT_ID,
+      	DBStatement: stmt,
+		objID
+	;
+
+	for( objID = 0; objID < MAX_MAPPED_OBJECTS; objID++ )
+		if( !g_objectSlotData[ iMap ] [ objID ] ) break;
+
+	if( objID > 0 && objID < MAX_MAPPED_OBJECTS )
+	{
+		if( g_objectSlotData[ iMap ] [ objID ] ) return -1; // Incase.
+
+		objectid = CreateDynamicObject( modelid, x, y, z, rx, ry, rz );
+
+		g_objectData[ iMap ] [ objID ] [ E_OBJECT ] = objectid;
+		g_objectData[ iMap ] [ objID ] [ E_MODEL_ID ] = modelid;
+		g_objectData[ iMap ] [ objID ] [ E_X ] = x;
+		g_objectData[ iMap ] [ objID ] [ E_Y ] = y;
+		g_objectData[ iMap ] [ objID ] [ E_Z ] = z;
+		g_objectData[ iMap ] [ objID ] [ E_RX ] = rx;
+		g_objectData[ iMap ] [ objID ] [ E_RY ] = ry;
+		g_objectData[ iMap ] [ objID ] [ E_RZ ] = rz;
+
+		g_objectSlotData[ iMap ] [ objID ] = true;
+
+		if( !loading )
+		{
+		    stmt = db_prepare( Database, "INSERT INTO `objects` (`map_id`,`x`,`y`,`z`,`rx`,`ry`,`rz`) VALUES(?, ?, ?, ?, ?, ?, ?)" );
+		    stmt_bind_value( stmt, 0, DB::TYPE_INT, iMap );
+		    stmt_bind_value( stmt, 1, DB::TYPE_FLOAT, x );
+		    stmt_bind_value( stmt, 2, DB::TYPE_FLOAT, y );
+		    stmt_bind_value( stmt, 3, DB::TYPE_FLOAT, z );
+		    stmt_bind_value( stmt, 4, DB::TYPE_FLOAT, rx );
+		    stmt_bind_value( stmt, 5, DB::TYPE_FLOAT, ry );
+		    stmt_bind_value( stmt, 6, DB::TYPE_FLOAT, rz );
+		    stmt_execute( stmt );
+		    stmt_close( stmt );
+		}
+	}
+	return objID;
+}
+
+stock givePlayerPermission( playerid, bool: can_issue_permissions = false, bool: promote_player = false )
+{
+	new
+      	DBStatement: stmt;
+
+	GetPlayerName( playerid, szPlayerName, sizeof( szPlayerName ) );
+
+	p_hasPermission{ playerid } = promote_player;
+	p_canGivePerms{ playerid } = can_issue_permissions;
+
+	if( promote_player )
+	{
+	    stmt = db_prepare( Database, "INSERT INTO `perms` (`author`, `issue_perms`) VALUES(?, ?)" );	   
+	    stmt_bind_value( stmt, 0, DB::TYPE_STRING, szPlayerName );
+	    stmt_bind_value( stmt, 1, DB::TYPE_INT   , can_issue_permissions ? 1 : 0 );	 
+	}
+	else
+	{
+	    stmt = db_prepare( Database, "DELETE FROM `perms` WHERE `author` = ?");
+	   	stmt_bind_value( stmt, 0, DB::TYPE_STRING, szPlayerName );	   
+	}
+
+    stmt_execute( stmt );
+    stmt_close( stmt );
+}
+
+/** BY DRACOBLUE
+ *  Return the value of an hex-string
+ *  @param string
+ */
+stock HexToInt(string[]) {
+	if (string[0]==0) return 0;
+	new i;
+	new cur=1;
+	new res=0;
+	for (i=strlen(string);i>0;i--) {
+		if (string[i-1]<58) res=res+cur*(string[i-1]-48); else res=res+cur*(string[i-1]-65+10);
+		cur=cur*16;
+	}
+	return res;
+}
